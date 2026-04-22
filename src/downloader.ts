@@ -102,6 +102,7 @@ function buildYtdlpArgs(url: string, outputTemplate: string, useChromeCookies: b
 
   if (useChromeCookies) {
     args.push(`--cookies-from-browser "chromium:${CHROME_PROFILE}"`);
+    args.push('--extractor-args "youtube:player_client=web"');
   }
 
   args.push(`--output "${outputTemplate}"`);
