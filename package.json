@@ -1,0 +1,26 @@
+{
+  "name": "crate-dl",
+  "version": "1.0.0",
+  "description": "VPS download microservice for Crate — download, encode, upload to GCS",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "keepalive": "node dist/keepalive.js"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
+    "dotenv": "^16.0.0",
+    "express": "^4.19.0",
+    "node-cron": "^3.0.3",
+    "playwright": "^1.44.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
