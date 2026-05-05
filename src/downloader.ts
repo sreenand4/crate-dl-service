@@ -7,8 +7,6 @@ import * as os from 'os';
 const BASE_DIR = process.env.DOWNLOAD_DIR || '/tmp/crate_dl';
 const TIMEOUT_MS = parseInt(process.env.DOWNLOAD_TIMEOUT_MS || '180000', 10);
 const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
-const CHROME_USER_DATA_DIR = process.env.CHROME_USER_DATA_DIR || path.join(os.homedir(), 'chrome-profile');
-const CHROME_PROFILE = process.env.CHROME_PROFILE_DIR || CHROME_USER_DATA_DIR;
 
 const HOME = process.env.HOME ?? os.homedir();
 const EXEC_ENV = {
@@ -91,7 +89,7 @@ function isTimeoutError(err: any): boolean {
   return err.timedOut === true || /timed out/i.test(err.message);
 }
 
-function buildYtdlpArgs(url: string, outputTemplate: string, useChromeCookies: boolean): string {
+function buildYtdlpArgs(url: string, outputTemplate: string): string {
   const args = [
     YTDLP,
     '--extract-audio',
@@ -103,10 +101,6 @@ function buildYtdlpArgs(url: string, outputTemplate: string, useChromeCookies: b
 
   args.push('--extractor-args "youtube:player_client=android"');
 
-  if (useChromeCookies) {
-    args.push(`--cookies-from-browser "chrome:${CHROME_PROFILE}"`);
-  }
-
   args.push(`--output "${outputTemplate}"`);
   args.push(`"${url}"`);
 
@@ -115,12 +109,11 @@ function buildYtdlpArgs(url: string, outputTemplate: string, useChromeCookies: b
 
 async function runYtdlp(
   url: string,
-  filename: string,
-  useChromeCookies: boolean
+  filename: string
 ): Promise<DownloadSuccess | DownloadError> {
   const outputTemplate = path.join(BASE_DIR, `${filename}.%(ext)s`);
   const expectedPath = path.join(BASE_DIR, `${filename}.mp3`);
-  const cmd = buildYtdlpArgs(url, outputTemplate, useChromeCookies);
+  const cmd = buildYtdlpArgs(url, outputTemplate);
 
   console.log(`[downloader] yt-dlp cmd: ${cmd}`);
 
@@ -165,21 +158,21 @@ async function youtubeSearchFallback(
 ): Promise<DownloadSuccess | DownloadError> {
   const query = `ytsearch1:${artist} ${songName} official audio`;
   console.log(`[downloader] SoundCloud failed — trying YouTube search fallback: "${query}"`);
-  return runYtdlp(query, filename, true);
+  return runYtdlp(query, filename);
 }
 
 /**
  * Main entry point — implements SoundCloud-first download with fallback logic.
  *
  * SoundCloud:
- *   1. Try SoundCloud via yt-dlp (no cookies)
- *   2. On failure → YouTube search fallback (with cookies)
+ *   1. Try SoundCloud via yt-dlp
+ *   2. On failure → YouTube search fallback
  *   3. Both fail → error
  *
  * YouTube:
- *   1. Try YouTube with --cookies-from-browser chromium
- *   2. On auth error → caller should trigger reauth and retry (retriable: false, isAuthError hint)
- *   3. On timeout → error with retriable: true
+ *   1. Try YouTube with android player client (no cookies needed on residential IP)
+ *   2. On auth error → retriable: false
+ *   3. On timeout → retriable: true
  */
 export async function download(input: DownloadInput): Promise<DownloadSuccess | DownloadError> {
   const { url, source, songName, artist } = input;
@@ -194,7 +187,7 @@ export async function download(input: DownloadInput): Promise<DownloadSuccess | 
   console.log(`[downloader] URL: ${url}`);
 
   if (source === 'soundcloud') {
-    const result = await runYtdlp(url, filename, false);
+    const result = await runYtdlp(url, filename);
     if ('localPath' in result) return result;
 
     // SoundCloud failed — try YouTube search fallback
@@ -209,5 +202,5 @@ export async function download(input: DownloadInput): Promise<DownloadSuccess | 
   }
 
   // source === 'youtube'
-  return runYtdlp(url, filename, true);
+  return runYtdlp(url, filename);
 }
