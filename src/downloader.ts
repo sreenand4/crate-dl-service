@@ -9,6 +9,8 @@ const TIMEOUT_MS = parseInt(process.env.DOWNLOAD_TIMEOUT_MS || '180000', 10);
 const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
 
 const HOME = process.env.HOME ?? os.homedir();
+const CHROME_PROFILE = process.env.CHROME_USER_DATA_DIR || path.join(HOME, 'chrome-profile');
+
 const EXEC_ENV = {
   ...process.env,
   PATH: [
@@ -68,10 +70,6 @@ function execWithTimeout(cmd: string): Promise<{ stdout: string; stderr: string 
   });
 }
 
-/**
- * Check if a yt-dlp error looks like a YouTube bot/auth rejection.
- * We use this to decide whether to trigger reauth before retrying.
- */
 export function isAuthError(stderr: string): boolean {
   const authPatterns = [
     /sign in to confirm you're not a bot/i,
@@ -89,7 +87,12 @@ function isTimeoutError(err: any): boolean {
   return err.timedOut === true || /timed out/i.test(err.message);
 }
 
-function buildYtdlpArgs(url: string, outputTemplate: string): string {
+interface BuildOptions {
+  playerClient?: string;
+  cookiesFromBrowser?: string;
+}
+
+function buildArgs(url: string, outputTemplate: string, opts: BuildOptions = {}): string {
   const args = [
     YTDLP,
     '--extract-audio',
@@ -99,7 +102,12 @@ function buildYtdlpArgs(url: string, outputTemplate: string): string {
     '--no-warnings',
   ];
 
-  args.push('--extractor-args "youtube:player_client=android"');
+  if (opts.playerClient) {
+    args.push(`--extractor-args "youtube:player_client=${opts.playerClient}"`);
+  }
+  if (opts.cookiesFromBrowser) {
+    args.push(`--cookies-from-browser "${opts.cookiesFromBrowser}"`);
+  }
 
   args.push(`--output "${outputTemplate}"`);
   args.push(`"${url}"`);
@@ -107,14 +115,7 @@ function buildYtdlpArgs(url: string, outputTemplate: string): string {
   return args.join(' ');
 }
 
-async function runYtdlp(
-  url: string,
-  filename: string
-): Promise<DownloadSuccess | DownloadError> {
-  const outputTemplate = path.join(BASE_DIR, `${filename}.%(ext)s`);
-  const expectedPath = path.join(BASE_DIR, `${filename}.mp3`);
-  const cmd = buildYtdlpArgs(url, outputTemplate);
-
+async function execYtdlp(cmd: string, expectedPath: string, filename: string): Promise<DownloadSuccess | DownloadError> {
   console.log(`[downloader] yt-dlp cmd: ${cmd}`);
 
   try {
@@ -147,33 +148,41 @@ async function runYtdlp(
   return { localPath: expectedPath, filename: `${filename}.mp3` };
 }
 
-/**
- * Try a YouTube search fallback using yt-dlp's ytsearch1: prefix.
- * Used when SoundCloud fails and source was soundcloud.
- */
-async function youtubeSearchFallback(
-  songName: string,
-  artist: string,
-  filename: string
-): Promise<DownloadSuccess | DownloadError> {
-  const query = `ytsearch1:${artist} ${songName} official audio`;
-  console.log(`[downloader] SoundCloud failed — trying YouTube search fallback: "${query}"`);
-  return runYtdlp(query, filename);
+// Plan A: android client — bypasses n-sig JS challenge, no PO token on residential IP
+// Plan B: android_vr — no PO token required at all, survives most YouTube backend changes
+// Plan C: web_creator + Chrome cookies — signed-in browser session as last resort
+// Timeouts short-circuit immediately (retriable: true) since client-switching won't help.
+async function runYoutubeWithFallbacks(url: string, filename: string): Promise<DownloadSuccess | DownloadError> {
+  const outputTemplate = path.join(BASE_DIR, `${filename}.%(ext)s`);
+  const expectedPath = path.join(BASE_DIR, `${filename}.mp3`);
+
+  console.log('[downloader] YouTube Plan A: android player client');
+  const resultA = await execYtdlp(
+    buildArgs(url, outputTemplate, { playerClient: 'android' }),
+    expectedPath, filename,
+  );
+  if ('localPath' in resultA || resultA.retriable) return resultA;
+
+  console.warn(`[downloader] Plan A failed (${resultA.error}) — trying Plan B: android_vr`);
+  const resultB = await execYtdlp(
+    buildArgs(url, outputTemplate, { playerClient: 'android_vr' }),
+    expectedPath, filename,
+  );
+  if ('localPath' in resultB || resultB.retriable) return resultB;
+
+  console.warn(`[downloader] Plan B failed (${resultB.error}) — trying Plan C: web_creator + Chrome cookies`);
+  const resultC = await execYtdlp(
+    buildArgs(url, outputTemplate, { playerClient: 'web_creator', cookiesFromBrowser: `chrome:${CHROME_PROFILE}` }),
+    expectedPath, filename,
+  );
+  if ('localPath' in resultC) return resultC;
+
+  return {
+    error: `All YouTube strategies failed. A: ${resultA.error} | B: ${resultB.error} | C: ${resultC.error}`,
+    retriable: false,
+  };
 }
 
-/**
- * Main entry point — implements SoundCloud-first download with fallback logic.
- *
- * SoundCloud:
- *   1. Try SoundCloud via yt-dlp
- *   2. On failure → YouTube search fallback
- *   3. Both fail → error
- *
- * YouTube:
- *   1. Try YouTube with android player client (no cookies needed on residential IP)
- *   2. On auth error → retriable: false
- *   3. On timeout → retriable: true
- */
 export async function download(input: DownloadInput): Promise<DownloadSuccess | DownloadError> {
   const { url, source, songName, artist } = input;
 
@@ -187,12 +196,14 @@ export async function download(input: DownloadInput): Promise<DownloadSuccess | 
   console.log(`[downloader] URL: ${url}`);
 
   if (source === 'soundcloud') {
-    const result = await runYtdlp(url, filename);
+    const outputTemplate = path.join(BASE_DIR, `${filename}.%(ext)s`);
+    const expectedPath = path.join(BASE_DIR, `${filename}.mp3`);
+    const result = await execYtdlp(buildArgs(url, outputTemplate), expectedPath, filename);
     if ('localPath' in result) return result;
 
-    // SoundCloud failed — try YouTube search fallback
     console.warn(`[downloader] SoundCloud failed (${result.error}), falling back to YouTube search`);
-    const fallback = await youtubeSearchFallback(songName, artist, `${filename}_yt`);
+    const query = `ytsearch1:${artist} ${songName} official audio`;
+    const fallback = await runYoutubeWithFallbacks(query, `${filename}_yt`);
     if ('localPath' in fallback) return fallback;
 
     return {
@@ -202,5 +213,5 @@ export async function download(input: DownloadInput): Promise<DownloadSuccess | 
   }
 
   // source === 'youtube'
-  return runYtdlp(url, filename);
+  return runYoutubeWithFallbacks(url, filename);
 }

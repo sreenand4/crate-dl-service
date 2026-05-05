@@ -30,21 +30,27 @@ There are no tests. There is no linter configured.
 src/index.ts        — Express app, /health + POST /download + bearer auth
 src/downloader.ts   — yt-dlp orchestration and fallback logic
 src/gcs.ts          — GCS upload to gs://dj-crate-stash/temp/{filename}
-start-chrome.sh     — xvfb-run wrapper; PM2 runs this to keep Chrome alive
 start-ngrok.sh      — sources .env and starts the ngrok tunnel; PM2-managed
-ecosystem.config.js — PM2 config: crate-dl, chrome, ngrok
+ecosystem.config.js — PM2 config: crate-dl, ngrok
 ```
 
 ### Download fallback logic (`src/downloader.ts`)
 
-- **SoundCloud source**: try yt-dlp without cookies → on failure, retry via `ytsearch1:{artist} {song} official audio` with `--cookies-from-browser chrome:{CHROME_USER_DATA_DIR}`
-- **YouTube source**: always uses `--extractor-args "youtube:player_client=android"` + `--cookies-from-browser chrome:{CHROME_PROFILE_DIR}` for auth. Android client bypasses the n-sig JS challenge and PO Token requirement. yt-dlp must be the pip-installed version (`~/.local/bin/yt-dlp`) — the standalone binary cannot solve JS challenges.
-- Auth errors (bot detection, 403, cookie issues) set `retriable: false`; timeouts set `retriable: true`
+No cookies or browser auth are used in normal operation. The residential IP makes both YouTube and SoundCloud treat requests as normal user traffic.
+
+- **SoundCloud source**: try yt-dlp directly against the SoundCloud URL (no extractor args — SoundCloud doesn't need them) → on failure, retry via `ytsearch1:{artist} {song} official audio` routed through the YouTube fallback chain below
+- **YouTube source** (and YouTube search fallback): tries three strategies in order, stopping on first success or on timeout:
+  - **Plan A** — `player_client=android`: bypasses n-sig JS challenge, no PO Token needed on residential IP
+  - **Plan B** — `player_client=android_vr`: no PO Token required at all; survives most YouTube backend changes
+  - **Plan C** — `player_client=web_creator` + `--cookies-from-browser chrome:{CHROME_PROFILE}`: uses the signed-in Chrome session as last resort
+- Timeouts short-circuit the fallback chain immediately (`retriable: true`) — switching clients won't fix a network timeout
+- Auth errors and format errors (`retriable: false`) do trigger the next plan
 - `isAuthError()` is exported so callers can distinguish auth failures
+- yt-dlp must be the pip-installed version (`~/.local/bin/yt-dlp`) — the standalone binary cannot solve JS challenges
 
-### Chrome session (`start-chrome.sh`)
+### Why Chrome was removed
 
-Google Chrome runs persistently via PM2, launched with `xvfb-run -a` (virtual display, since this machine has no desktop session). Chrome is signed into Google and keeps its own session alive — no periodic cookie-refresh process needed. yt-dlp reads cookies directly from the profile on disk via `--cookies-from-browser chrome:/path/to/profile`.
+The original DigitalOcean setup used `--cookies-from-browser chrome:...` to pass YouTube auth cookies from a signed-in Chrome profile — datacenter IPs need that to avoid bot detection. After migrating to the Dell (residential IP), cookies became unnecessary and were actively breaking things: the android player client is incompatible with `--cookies-from-browser`, causing "Requested format is not available" errors. Dropping cookies entirely fixed it. Chrome is no longer started or needed.
 
 ### Tunnel (`start-ngrok.sh`)
 
@@ -59,9 +65,7 @@ ngrok exposes port 4000 via a stable custom domain. PM2 manages the process. The
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON |
 | `GCP_ID` | GCP project ID |
 | `YTDLP_PATH` | Path to yt-dlp binary (default: `yt-dlp`) |
-| `CHROME_EXECUTABLE_PATH` | Path to Chrome binary (default: `google-chrome`) |
-| `CHROME_USER_DATA_DIR` | Persistent Chrome profile directory (default: `~/chrome-profile`) |
-| `CHROME_DEBUG_PORT` | CDP debug port Chrome listens on (default: `9222`) |
+| `CHROME_USER_DATA_DIR` | Chrome profile dir used by Plan C cookie fallback (default: `~/chrome-profile`) |
 | `DOWNLOAD_DIR` | Temp dir for in-progress downloads (default: `/tmp/crate_dl`) |
 | `DOWNLOAD_TIMEOUT_MS` | yt-dlp timeout in ms (default: `180000`) |
 | `NGROK_DOMAIN` | ngrok custom domain |
@@ -72,18 +76,10 @@ ngrok exposes port 4000 via a stable custom domain. PM2 manages the process. The
 ```bash
 npm install
 npm run build
-chmod +x start-chrome.sh start-ngrok.sh
+chmod +x start-ngrok.sh
 pm2 start ecosystem.config.js
 pm2 save
 pm2 startup   # follow the printed command to enable on reboot
-```
-
-First-time Chrome login (do once — SSH X forwarding from Mac):
-```bash
-# On Mac:
-ssh -X sree@<machine-ip>
-google-chrome --user-data-dir=/home/sree/chrome-profile --no-sandbox
-# Sign into Google, then close Chrome
 ```
 
 PM2 status and logs:
