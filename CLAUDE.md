@@ -38,7 +38,7 @@ ecosystem.config.js — PM2 config: crate-dl, chrome, ngrok
 ### Download fallback logic (`src/downloader.ts`)
 
 - **SoundCloud source**: try yt-dlp without cookies → on failure, retry via `ytsearch1:{artist} {song} official audio` with `--cookies-from-browser chrome:{CHROME_USER_DATA_DIR}`
-- **YouTube source**: always uses `--cookies-from-browser chrome:{CHROME_USER_DATA_DIR}` + `--js-runtimes nodejs`
+- **YouTube source**: always uses `--extractor-args "youtube:player_client=android"` + `--cookies-from-browser chrome:{CHROME_PROFILE_DIR}` for auth. Android client bypasses the n-sig JS challenge and PO Token requirement. yt-dlp must be the pip-installed version (`~/.local/bin/yt-dlp`) — the standalone binary cannot solve JS challenges.
 - Auth errors (bot detection, 403, cookie issues) set `retriable: false`; timeouts set `retriable: true`
 - `isAuthError()` is exported so callers can distinguish auth failures
 

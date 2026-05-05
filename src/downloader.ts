@@ -101,9 +101,10 @@ function buildYtdlpArgs(url: string, outputTemplate: string, useChromeCookies: b
     '--no-warnings',
   ];
 
+  args.push('--extractor-args "youtube:player_client=android"');
+
   if (useChromeCookies) {
     args.push(`--cookies-from-browser "chrome:${CHROME_PROFILE}"`);
-    args.push('--js-runtimes nodejs');
   }
 
   args.push(`--output "${outputTemplate}"`);
