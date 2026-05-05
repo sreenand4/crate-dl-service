@@ -7,7 +7,8 @@ import * as os from 'os';
 const BASE_DIR = process.env.DOWNLOAD_DIR || '/tmp/crate_dl';
 const TIMEOUT_MS = parseInt(process.env.DOWNLOAD_TIMEOUT_MS || '180000', 10);
 const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
-const CHROME_PROFILE = process.env.CHROME_USER_DATA_DIR || path.join(os.homedir(), 'chrome-profile');
+const CHROME_USER_DATA_DIR = process.env.CHROME_USER_DATA_DIR || path.join(os.homedir(), 'chrome-profile');
+const CHROME_PROFILE = process.env.CHROME_PROFILE_DIR || CHROME_USER_DATA_DIR;
 
 const HOME = process.env.HOME ?? os.homedir();
 const EXEC_ENV = {
