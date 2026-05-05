@@ -1,7 +1,7 @@
 {
   "name": "crate-dl",
   "version": "1.0.0",
-  "description": "Download microservice for Crate — download, encode, upload to GCS",
+  "description": "Local download microservice for Crate — download, encode, upload to GCS",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
