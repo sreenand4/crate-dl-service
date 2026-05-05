@@ -1,8 +1,12 @@
+const path = require('path');
+const ROOT = __dirname;
+
 module.exports = {
   apps: [
     {
       name: 'crate-dl',
-      script: 'dist/index.js',
+      script: path.join(ROOT, 'dist/index.js'),
+      cwd: ROOT,
       instances: 1,
       autorestart: true,
       watch: false,
@@ -10,23 +14,22 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
       },
-      error_file: '/home/crate/logs/crate-dl-error.log',
-      out_file: '/home/crate/logs/crate-dl-out.log',
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
     },
     {
-      name: 'crate-dl-keepalive',
-      script: 'dist/keepalive.js',
-      instances: 1,
+      name: 'chrome',
+      script: path.join(ROOT, 'start-chrome.sh'),
+      interpreter: 'bash',
+      cwd: ROOT,
       autorestart: true,
       watch: false,
-      cron_restart: '0 */6 * * *',
-      env: {
-        NODE_ENV: 'production',
-      },
-      error_file: '/home/crate/logs/keepalive-error.log',
-      out_file: '/home/crate/logs/keepalive-out.log',
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+    {
+      name: 'ngrok',
+      script: path.join(ROOT, 'start-ngrok.sh'),
+      interpreter: 'bash',
+      cwd: ROOT,
+      autorestart: true,
+      watch: false,
     },
   ],
 };
